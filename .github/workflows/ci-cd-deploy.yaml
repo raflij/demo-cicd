@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  IMAGE_NAME: demo-todo-app
+  HOST_PORT: "8080" # published port on the server host
+
 jobs:
   build:
     name: Install & Build
@@ -38,51 +42,56 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist
-          path: dist
           retention-days: 5
 
   deploy:
-    name: Deploy to Self-Hosted
+    name: Deploy as Docker container
     needs: build
-    runs-on: self-hosted # runs ON the server = the deploy target
-    timeout-minutes: 10
+    runs-on: self-hosted # runner has Docker and IS the target host
+    timeout-minutes: 15
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download build
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
 
-      - name: Verify Node is available on the runner
-        run: node --version
+      - name: Verify Docker on the runner
+        run: docker --version
 
-      - name: Sync build to app dir
+      - name: Build versioned image
         run: |
-          SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
-          $SUDO mkdir -p /opt/demo
-          $SUDO rm -rf /opt/demo/dist
-          $SUDO cp -r dist /opt/demo/dist
-          echo "version=${{ needs.build.outputs.version }}" | $SUDO tee /opt/demo/VERSION
+          docker build -t ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.version }} .
+          docker tag ${{ env.IMAGE_NAME }}:${{ needs.build.outputs.version }} ${{ env.IMAGE_NAME }}:latest
 
-      - name: Restart the running app
+      - name: Stop & remove previous container (if any)
         run: |
-          SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
-          PORT=4173
-          $SUDO pkill -f "vite preview" || true
-          sleep 2
-          $SUDO nohup npx --yes vite preview --port "$PORT" --host > /opt/demo/preview.log 2>&1 &
-          sleep 5
+          docker rm -f ${{ env.IMAGE_NAME }} 2>/dev/null || true
 
-      - name: Health check
+      - name: Run new container on the host port
         run: |
-          PORT=4173
-          for i in $(seq 1 20); do
-            if curl -fsS "http://localhost:$PORT" >/dev/null; then
-              echo "Deploy ${{ needs.build.outputs.version }} is live on port $PORT."
+          docker run -d \
+            --name ${{ env.IMAGE_NAME }} \
+            --restart unless-stopped \
+            -p ${{ env.HOST_PORT }}:4173 \
+            ${{ env.IMAGE_NAME }}:latest
+          echo "Container started. Reach it at http://<server-ip>:${{ env.HOST_PORT }}"
+
+      - name: Health check via published port
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS "http://localhost:${{ env.HOST_PORT }}" >/dev/null; then
+              echo "Deploy ${{ needs.build.outputs.version }} live on port ${{ env.HOST_PORT }}."
               exit 0
             fi
             sleep 2
           done
-          echo "App did not respond on port $PORT — see /opt/demo/preview.log" >&2
-          cat /opt/demo/preview.log >&2 || true
+          docker logs --tail 50 ${{ env.IMAGE_NAME }} || true
+          echo "Container did not respond on port ${{ env.HOST_PORT }}." >&2
           exit 1
+
+      - name: Prune old dangling images
+        run: docker image prune -f >/dev/null 2>&1 || true
