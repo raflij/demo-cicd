@@ -1,3 +1,5 @@
+import './style.css'
+
 const STORAGE_KEY = 'todo-app:tasks'
 
 let loadFailed = false
