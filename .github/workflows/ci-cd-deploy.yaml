@@ -38,12 +38,6 @@ jobs:
         id: version
         run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Package dist
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          retention-days: 5
-
   deploy:
     name: Deploy as Docker container
     needs: build
@@ -52,12 +46,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Download build
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
 
       - name: Verify Docker on the runner
         run: docker --version
