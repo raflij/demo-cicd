@@ -1,0 +1,88 @@
+name: CI/CD — Deploy to Self-Hosted
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Install & Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (acts as the test gate)
+        run: npm run build
+
+      - name: Tag the deployable version
+        id: version
+        run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Package dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 5
+
+  deploy:
+    name: Deploy to Self-Hosted
+    needs: build
+    runs-on: self-hosted # runs ON the server = the deploy target
+    timeout-minutes: 10
+    steps:
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Verify Node is available on the runner
+        run: node --version
+
+      - name: Sync build to app dir
+        run: |
+          SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
+          $SUDO mkdir -p /opt/demo
+          $SUDO rm -rf /opt/demo/dist
+          $SUDO cp -r dist /opt/demo/dist
+          echo "version=${{ needs.build.outputs.version }}" | $SUDO tee /opt/demo/VERSION
+
+      - name: Restart the running app
+        run: |
+          SUDO=""; [ "$(id -u)" = 0 ] || SUDO="sudo"
+          PORT=4173
+          $SUDO pkill -f "vite preview" || true
+          sleep 2
+          $SUDO nohup npx --yes vite preview --port "$PORT" --host > /opt/demo/preview.log 2>&1 &
+          sleep 5
+
+      - name: Health check
+        run: |
+          PORT=4173
+          for i in $(seq 1 20); do
+            if curl -fsS "http://localhost:$PORT" >/dev/null; then
+              echo "Deploy ${{ needs.build.outputs.version }} is live on port $PORT."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "App did not respond on port $PORT — see /opt/demo/preview.log" >&2
+          cat /opt/demo/preview.log >&2 || true
+          exit 1
