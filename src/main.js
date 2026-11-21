@@ -42,11 +42,7 @@ const clearCompleted = document.querySelector('#clear-completed')
 const form = document.querySelector('#todo-form')
 const statusEl = document.querySelector('#save-status')
 const loadBanner = document.querySelector('#load-error-banner')
-const undoToast = document.querySelector('#undo-toast')
-const undoBtn = document.querySelector('#undo-action')
-const undoLabel = document.querySelector('#undo-message')
-
-let undoTimer = null
+const notifications = document.querySelector('#notifications')
 
 function flashStatus(text) {
   statusEl.textContent = text
@@ -70,21 +66,55 @@ function newTodoId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
-function showToast(message, actionLabel, onAction) {
-  undoLabel.textContent = message
-  undoBtn.textContent = actionLabel
-  undoBtn.onclick = () => {
-    hideToast()
-    onAction()
-  }
-  undoToast.classList.remove('hidden')
-  clearTimeout(undoTimer)
-  undoTimer = setTimeout(hideToast, 6000)
+const ICONS = {
+  success: '<svg class="h-4 w-4 shrink-0 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
+  info: '<svg class="h-4 w-4 shrink-0 text-sky-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>',
+  danger: '<svg class="h-4 w-4 shrink-0 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>'
 }
 
-function hideToast() {
-  clearTimeout(undoTimer)
-  undoToast.classList.add('hidden')
+function notify(message, { type = 'success', duration = 3000, action } = {}) {
+  const toast = document.createElement('div')
+  toast.className =
+    'pointer-events-auto flex w-fit max-w-[90vw] items-center gap-3 rounded-lg bg-slate-900 px-4 py-2.5 text-sm text-white shadow-lg'
+
+  const row = document.createElement('div')
+  row.className = 'flex min-w-0 items-center gap-2'
+  row.append(ICONS[type] || ICONS.success)
+  const msg = document.createElement('span')
+  msg.className = 'truncate'
+  msg.textContent = message
+  row.append(msg)
+  toast.append(row)
+
+  let timer
+  if (action) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.textContent = action.label
+    btn.className =
+      'shrink-0 rounded-md bg-indigo-500 px-2.5 py-1 font-medium text-white hover:bg-indigo-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400'
+    btn.addEventListener('click', () => {
+      action.handler()
+      dismiss()
+    })
+    toast.append(btn)
+  }
+
+  const dismiss = () => {
+    clearTimeout(timer)
+    toast.classList.add('hidden')
+    toast.remove()
+  }
+
+  notifications.prepend(toast)
+  // cap the stack so rapid actions don't pile up forever
+  while (notifications.children.length > 3) notifications.lastElementChild.remove()
+
+  if (duration > 0) {
+    timer = setTimeout(dismiss, duration)
+  } else if (!action) {
+    timer = setTimeout(dismiss, 6000)
+  }
 }
 
 function renderTodos() {
@@ -144,12 +174,19 @@ function addTodo(text) {
 
   todos.push({ id: newTodoId(), text: trimmed, completed: false })
   renderTodos()
+  notify(`Added "${trimmed}"`)
 }
 
 function toggleTodo(id) {
   const todo = todos.find((t) => t.id === id)
-  if (todo) todo.completed = !todo.completed
-  renderTodos()
+  if (todo) {
+    todo.completed = !todo.completed
+    renderTodos()
+    notify(
+      todo.completed ? `Completed "${todo.text}"` : `Reopened "${todo.text}"`,
+      { type: todo.completed ? 'success' : 'info' }
+    )
+  }
 }
 
 function deleteTodo(id, index) {
@@ -157,9 +194,16 @@ function deleteTodo(id, index) {
   const originalTodos = [...todos]
   todos = todos.filter((t) => t.id !== id)
   renderTodos()
-  showToast(`Deleted "${removed.text}"`, 'Undo', () => {
-    todos = originalTodos
-    renderTodos()
+  notify(`Deleted "${removed.text}"`, {
+    type: 'danger',
+    duration: 6000,
+    action: {
+      label: 'Undo',
+      handler: () => {
+        todos = originalTodos
+        renderTodos()
+      }
+    }
   })
 }
 
@@ -169,9 +213,16 @@ function clearCompletedTodos() {
   const originalTodos = [...todos]
   todos = todos.filter((t) => !t.completed)
   renderTodos()
-  showToast(`Cleared ${removed.length} completed`, 'Undo', () => {
-    todos = originalTodos
-    renderTodos()
+  notify(`Cleared ${removed.length} completed`, {
+    type: 'danger',
+    duration: 6000,
+    action: {
+      label: 'Undo',
+      handler: () => {
+        todos = originalTodos
+        renderTodos()
+      }
+    }
   })
 }
 
