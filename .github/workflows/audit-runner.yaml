@@ -12,7 +12,7 @@ permissions:
 jobs:
   check-specs:
     name: Inspect System Specifications
-    runs-on: ubuntu-latest # Ganti ke 'self-hosted' jika mengecek server pribadi/VPS
+    runs-on: self-hosted # Ganti ke 'self-hosted' jika mengecek server pribadi/VPS
     timeout-minutes: 5
 
     steps:
