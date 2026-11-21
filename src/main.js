@@ -72,21 +72,58 @@ const ICONS = {
   danger: '<svg class="h-4 w-4 shrink-0 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg>'
 }
 
+const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
+
 function notify(message, { type = 'success', duration = 3000, action } = {}) {
+  // Dedupe: a fresh identical confirmation replaces the pending one instead
+  // of stacking, so rapid repeats show a single toast.
+  const dedupKey = message + (action ? ':action' : '')
+  for (const existing of Array.from(notifications.children)) {
+    if (existing.dataset.dedup === dedupKey) existing.remove()
+  }
+
   const toast = document.createElement('div')
+  toast.dataset.dedup = dedupKey
+  toast.setAttribute('role', 'status')
   toast.className =
     'pointer-events-auto flex w-fit max-w-[90vw] items-center gap-3 rounded-lg bg-slate-900 px-4 py-2.5 text-sm text-white shadow-lg'
+  if (!prefersReducedMotion) toast.style.transform = 'translateY(0.5rem)'
 
   const row = document.createElement('div')
   row.className = 'flex min-w-0 items-center gap-2'
   row.append(ICONS[type] || ICONS.success)
   const msg = document.createElement('span')
   msg.className = 'truncate'
+  msg.title = message
   msg.textContent = message
   row.append(msg)
   toast.append(row)
 
-  let timer
+  let timer = null
+  let dismissing = false
+
+  const enter = () => {
+    if (prefersReducedMotion) return
+    requestAnimationFrame(() => {
+      toast.style.transition = 'transform 160ms cubic-bezier(0.16,1,0.3,1), opacity 160ms ease-out'
+      toast.style.transform = 'translateY(0)'
+    })
+  }
+
+  const dismiss = () => {
+    if (dismissing) return
+    dismissing = true
+    clearTimeout(timer)
+    if (prefersReducedMotion) {
+      toast.remove()
+      return
+    }
+    toast.style.transform = 'translateY(0.5rem)'
+    toast.style.opacity = '0'
+    toast.addEventListener('transitionend', () => toast.remove(), { once: true })
+    setTimeout(() => { if (toast.isConnected) toast.remove() }, 300) // safety net
+  }
+
   if (action) {
     const btn = document.createElement('button')
     btn.type = 'button'
@@ -98,23 +135,21 @@ function notify(message, { type = 'success', duration = 3000, action } = {}) {
       dismiss()
     })
     toast.append(btn)
-  }
-
-  const dismiss = () => {
-    clearTimeout(timer)
-    toast.classList.add('hidden')
-    toast.remove()
+    // Action toasts (Undo) wait for the user; no auto-dismiss.
+  } else {
+    timer = setTimeout(dismiss, duration)
   }
 
   notifications.prepend(toast)
-  // cap the stack so rapid actions don't pile up forever
-  while (notifications.children.length > 3) notifications.lastElementChild.remove()
-
-  if (duration > 0) {
-    timer = setTimeout(dismiss, duration)
-  } else if (!action) {
-    timer = setTimeout(dismiss, 6000)
+  // Cap the stack: clear the evicted toast's pending timer before removing it.
+  while (notifications.children.length > 3) {
+    const evicted = notifications.lastElementChild
+    if (evicted._clearTimer) evicted._clearTimer()
+    evicted.remove()
   }
+  toast._clearTimer = () => clearTimeout(timer)
+
+  enter()
 }
 
 function renderTodos() {
@@ -196,7 +231,6 @@ function deleteTodo(id, index) {
   renderTodos()
   notify(`Deleted "${removed.text}"`, {
     type: 'danger',
-    duration: 6000,
     action: {
       label: 'Undo',
       handler: () => {
@@ -215,7 +249,6 @@ function clearCompletedTodos() {
   renderTodos()
   notify(`Cleared ${removed.length} completed`, {
     type: 'danger',
-    duration: 6000,
     action: {
       label: 'Undo',
       handler: () => {
