@@ -91,7 +91,9 @@ function notify(message, { type = 'success', duration = 3000, action } = {}) {
 
   const row = document.createElement('div')
   row.className = 'flex min-w-0 items-center gap-2'
-  row.append(ICONS[type] || ICONS.success)
+  const icon = document.createElement('span')
+  icon.innerHTML = ICONS[type] || ICONS.success
+  row.append(icon)
   const msg = document.createElement('span')
   msg.className = 'truncate'
   msg.title = message
